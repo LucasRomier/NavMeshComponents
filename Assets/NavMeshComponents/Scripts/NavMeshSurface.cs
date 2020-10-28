@@ -13,6 +13,13 @@ namespace UnityEngine.AI
         Children = 2,
     }
 
+    public enum SelectionType
+    {
+        All = 0,
+        Obstacles = 1,
+        Colliders = 2
+    }
+
     [ExecuteAlways]
     [DefaultExecutionOrder(-102)]
     [AddComponentMenu("Navigation/NavMeshSurface", 30)]
@@ -44,6 +51,14 @@ namespace UnityEngine.AI
         public NavMeshCollectGeometry useGeometry { get { return m_UseGeometry; } set { m_UseGeometry = value; } }
 
         [SerializeField]
+        SelectionType m_SelectionType = SelectionType.All;
+        public SelectionType selectionType { get { return m_SelectionType; } set { m_SelectionType = value; } }
+
+        [SerializeField]
+        float m_ColliderTolerance = 1.3F;
+        public float colliderTolerance { get { return m_ColliderTolerance; } set { m_ColliderTolerance = value; } }
+
+        [SerializeField]
         int m_DefaultArea;
         public int defaultArea { get { return m_DefaultArea; } set { m_DefaultArea = value; } }
 
@@ -73,6 +88,9 @@ namespace UnityEngine.AI
         bool m_BuildHeightMesh;
         public bool buildHeightMesh { get { return m_BuildHeightMesh; } set { m_BuildHeightMesh = value; } }
 
+        [SerializeField]
+        bool m_Debug;
+
         // Reference to whole scene navmesh data asset.
         [UnityEngine.Serialization.FormerlySerializedAs("m_BakedNavMeshData")]
         [SerializeField]
@@ -86,8 +104,7 @@ namespace UnityEngine.AI
 
         static readonly List<NavMeshSurface> s_NavMeshSurfaces = new List<NavMeshSurface>();
 
-        public static List<NavMeshSurface> activeSurfaces
-        {
+        public static List<NavMeshSurface> activeSurfaces {
             get { return s_NavMeshSurfaces; }
         }
 
@@ -340,6 +357,111 @@ namespace UnityEngine.AI
                 }
             }
 
+            // --- --- --- Terrain trees --- --- ---
+
+            Terrain[] terrains = GameObject.FindObjectsOfType<Terrain>();
+
+            if (terrains.Length > 0)
+            {
+                foreach (Terrain item in terrains)
+                {
+                    Terrain terrain = item.GetComponent<Terrain>();
+                    TerrainData terrainData = terrain.terrainData;
+                    Vector3 size = Terrain.activeTerrain.terrainData.size;
+                    Vector3 terrainPos = terrain.GetPosition();
+                    if (m_Debug) Debug.Log("terrainPos = " + terrainPos);
+                    int treesArea = NavMesh.GetAreaFromName("Not Walkable");
+                    if (treesArea < 0)
+                    {
+                        Debug.LogError("Unrecognized area name! The default area will be used instead.");
+                        treesArea = 0;
+                    }
+
+                    TreePrototype[] treePrototypes = terrainData.treePrototypes;
+                    TreeInstance[] treeInstances = terrainData.treeInstances;
+                    if (m_Debug) Debug.Log("trees found = " + treeInstances.Length);
+                    for (int i = 0; i < treeInstances.Length; i++)
+                    {
+                        //treeInstances[i] is the current ACTUAL tree we're going over.
+                        //the tree prototype is the "template" used by this tree.
+                        TreePrototype prototype = treePrototypes[treeInstances[i].prototypeIndex];
+                        GameObject prefab = prototype.prefab;
+
+                        NavMeshObstacle obstacle = prefab.GetComponent<NavMeshObstacle>();
+                        Collider collider = prefab.GetComponentInChildren<Collider>();
+                        bool obstacleBool = obstacle != null && (m_SelectionType == SelectionType.All || m_SelectionType == SelectionType.Obstacles);
+                        bool colliderBool = collider != null && (m_SelectionType == SelectionType.All || m_SelectionType == SelectionType.Colliders);
+                        if (obstacleBool || colliderBool)
+                        {
+                            Vector3 center = Vector3.zero;
+                            if (obstacle != null) center = obstacle.center;
+                            else if (collider != null) center = collider.bounds.center;
+
+                            if (m_Debug) Debug.Log("treeInstances[" + i + "] info:\n" + treeInstances[i].position + " " + treeInstances[i].rotation + " " + treeInstances[i].widthScale + " " + treeInstances[i].heightScale);
+                            Vector3 worldTreePos = terrainPos + Vector3.Scale(treeInstances[i].position, size) + center;
+
+                            Quaternion worldTreeRot = Quaternion.Euler(0, treeInstances[i].rotation * Mathf.Rad2Deg, 0);
+                            Vector3 worldTreeScale = new Vector3(treeInstances[i].widthScale, treeInstances[i].heightScale, treeInstances[i].widthScale);
+                            if (m_Debug) Debug.Log("CREATED MATRIX FOR TRS:\nworldTreePos = " + worldTreePos + "\nworldTreeRot = " + worldTreeRot + "\nworldTreeScale = " + worldTreeScale);
+
+                            NavMeshBuildSource src = new NavMeshBuildSource();
+                            src.transform = Matrix4x4.TRS(worldTreePos, worldTreeRot, worldTreeScale);
+
+                            if (obstacleBool)
+                            {
+                                switch (obstacle.shape)
+                                {
+                                    case NavMeshObstacleShape.Capsule:
+                                        src.shape = NavMeshBuildSourceShape.Capsule;
+
+                                        //Unity 2019.2.0f1: BUG!! navMeshObstacle.height returns exactly HALF of the actual height of the obstacle.
+                                        //Use the size property instead.
+                                        src.size = obstacle.size;
+                                        break;
+                                    case NavMeshObstacleShape.Box:
+                                        src.shape = NavMeshBuildSourceShape.Box;
+                                        src.size = obstacle.size;
+                                        break;
+                                    default:
+                                        Debug.LogError("Unsupported type of " + typeof(NavMeshObstacleShape).Name
+                                                                            + " for the building of the " + typeof(NavMeshSurface).Name + "! (" + obstacle.shape + ")");
+                                        break;
+                                }
+                            }
+                            else if (colliderBool)
+                            {
+                                if (collider is CapsuleCollider)
+                                {
+                                    src.shape = NavMeshBuildSourceShape.Capsule;
+
+                                    //Unity 2019.2.0f1: BUG!! navMeshObstacle.height returns exactly HALF of the actual height of the obstacle.
+                                    //Use the size property instead.
+                                    src.size = ((CapsuleCollider)collider).radius * Vector3.one * m_ColliderTolerance;
+                                }
+                                else if (collider is BoxCollider)
+                                {
+                                    src.shape = NavMeshBuildSourceShape.Box;
+                                    src.size = collider.bounds.size * m_ColliderTolerance;
+                                }
+                                else
+                                {
+                                    Debug.LogError("Unsupported type of " + typeof(NavMeshObstacleShape).Name
+                                                                            + " for the building of the " + typeof(NavMeshSurface).Name + "! (" + obstacle.shape + ")");
+                                }
+                            }
+
+                            // Scale size
+                            src.size = Vector3.Scale(src.size, prefab.transform.localScale);
+                            if (m_Debug) Debug.Log("src.size = " + src.size);
+                            src.area = treesArea;
+                            sources.Add(src);
+                        }
+                    }
+                }
+            }
+
+            // --- --- --- End of Terrain trees --- --- ---
+
             if (m_IgnoreNavMeshAgent)
                 sources.RemoveAll((x) => (x.component != null && x.component.gameObject.GetComponent<NavMeshAgent>() != null));
 
@@ -378,18 +500,18 @@ namespace UnityEngine.AI
                 switch (src.shape)
                 {
                     case NavMeshBuildSourceShape.Mesh:
-                    {
-                        var m = src.sourceObject as Mesh;
-                        result.Encapsulate(GetWorldBounds(worldToLocal * src.transform, m.bounds));
-                        break;
-                    }
+                        {
+                            var m = src.sourceObject as Mesh;
+                            result.Encapsulate(GetWorldBounds(worldToLocal * src.transform, m.bounds));
+                            break;
+                        }
                     case NavMeshBuildSourceShape.Terrain:
-                    {
-                        // Terrain pivot is lower/left corner - shift bounds accordingly
-                        var t = src.sourceObject as TerrainData;
-                        result.Encapsulate(GetWorldBounds(worldToLocal * src.transform, new Bounds(0.5f * t.size, t.size)));
-                        break;
-                    }
+                        {
+                            // Terrain pivot is lower/left corner - shift bounds accordingly
+                            var t = src.sourceObject as TerrainData;
+                            result.Encapsulate(GetWorldBounds(worldToLocal * src.transform, new Bounds(0.5f * t.size, t.size)));
+                            break;
+                        }
                     case NavMeshBuildSourceShape.Box:
                     case NavMeshBuildSourceShape.Sphere:
                     case NavMeshBuildSourceShape.Capsule:

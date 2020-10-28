@@ -28,6 +28,9 @@ namespace UnityEditor.AI
         SerializedProperty m_TileSize;
         SerializedProperty m_UseGeometry;
         SerializedProperty m_VoxelSize;
+        SerializedProperty m_Debug;
+        SerializedProperty m_SelectionType;
+        SerializedProperty m_ColliderTolerance;
 
 #if NAVMESHCOMPONENTS_SHOW_NAVMESHDATA_REF
         SerializedProperty m_NavMeshData;
@@ -55,8 +58,7 @@ namespace UnityEditor.AI
 
         BoxBoundsHandle m_BoundsHandle = new BoxBoundsHandle();
 
-        bool editingCollider
-        {
+        bool editingCollider {
             get { return EditMode.editMode == EditMode.SceneViewEditMode.Collider && EditMode.IsOwner(this); }
         }
 
@@ -74,6 +76,9 @@ namespace UnityEditor.AI
             m_TileSize = serializedObject.FindProperty("m_TileSize");
             m_UseGeometry = serializedObject.FindProperty("m_UseGeometry");
             m_VoxelSize = serializedObject.FindProperty("m_VoxelSize");
+            m_Debug = serializedObject.FindProperty("m_Debug");
+            m_SelectionType = serializedObject.FindProperty("m_SelectionType");
+            m_ColliderTolerance = serializedObject.FindProperty("m_ColliderTolerance");
 
 #if NAVMESHCOMPONENTS_SHOW_NAVMESHDATA_REF
             m_NavMeshData = serializedObject.FindProperty("m_NavMeshData");
@@ -132,6 +137,10 @@ namespace UnityEditor.AI
 
             EditorGUILayout.PropertyField(m_LayerMask, s_Styles.m_LayerMask);
             EditorGUILayout.PropertyField(m_UseGeometry);
+
+            EditorGUILayout.Space();
+            EditorGUILayout.PropertyField(m_SelectionType);
+            EditorGUILayout.PropertyField(m_ColliderTolerance);
 
             EditorGUILayout.Space();
 
@@ -197,6 +206,9 @@ namespace UnityEditor.AI
                 EditorGUILayout.Space();
                 EditorGUI.indentLevel--;
             }
+
+            EditorGUILayout.Space();
+            EditorGUILayout.PropertyField(m_Debug);
 
             EditorGUILayout.Space();
 
